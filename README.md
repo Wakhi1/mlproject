@@ -35,6 +35,7 @@ The system is intentionally **lean** — no heavy orchestration frameworks. It u
 
 - **FastAPI** — REST API for scoring and data ingestion
 - **scikit-learn / XGBoost** — model training
+- **MySQL / MariaDB** — taxpayer record storage, queried with raw SQL via `mysql-connector-python`
 - **MLflow** — model versioning and experiment tracking
 - **Docker + Docker Compose** — containerized deployment
 - **GitHub Actions** — CI/CD pipeline
@@ -46,8 +47,8 @@ The system is intentionally **lean** — no heavy orchestration frameworks. It u
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        ERS Staff / Frontend                  │
-│              (Internal Web Portal or API Client)             │
+│                        ERS Staff / Frontend                 │
+│              (Internal Web Portal or API Client)            │
 └─────────────────────────┬───────────────────────────────────┘
                           │ HTTP
                           ▼
@@ -59,16 +60,16 @@ The system is intentionally **lean** — no heavy orchestration frameworks. It u
           ┌──────────────┼──────────────┐
           ▼              ▼              ▼
    ┌────────────┐  ┌──────────┐  ┌───────────────┐
-   │  MLflow    │  │ Model    │  │  PostgreSQL    │
-   │  Tracking  │  │ Registry │  │  (Taxpayer     │
-   │  (Port     │  │ (Local   │  │   Records DB)  │
+   │  MLflow    │  │ Model    │  │  MySQL/MariaDB│
+   │  Tracking  │  │ Registry │  │  (Taxpayer    │
+   │  (Port     │  │ (Local   │  │   Records DB) │
    │   5000)    │  │  FS/S3)  │  └───────────────┘
    └────────────┘  └──────────┘
           │
           ▼
    ┌─────────────────────┐
-   │ Prometheus + Grafana │  ← AUC, Drift, Latency dashboards
-   │ (Port 3000)          │
+   │ Prometheus + Grafana│  ← AUC, Drift, Latency dashboards
+   │ (Port 3000)         │
    └─────────────────────┘
 ```
 
@@ -94,6 +95,12 @@ ers-compliance-risk-model/
 │   ├── evaluate.py              # AUC, F1, confusion matrix output
 │   ├── preprocess.py            # Feature engineering & encoding
 │   └── artifacts/               # Saved model artifacts (gitignored)
+│
+├── db/
+│   ├── connection.py            # mysql-connector-python pool setup
+│   ├── queries.py               # All raw SQL queries (insert, select, etc.)
+│   └── migrations/
+│       └── 001_init.sql         # Initial schema — taxpayer_records table
 │
 ├── data/
 │   ├── ers_sample_dataset.csv   # Seed dataset (Eswatini context)
@@ -254,7 +261,7 @@ docker compose up -d --build
 |---|---|---|
 | `api` | 8000 | FastAPI scoring & ingestion |
 | `mlflow` | 5000 | Experiment tracking UI |
-| `postgres` | 5432 | Taxpayer record storage |
+| `mysql` | 3306 | Taxpayer record storage (MariaDB compatible) |
 | `prometheus` | 9090 | Metrics scraping |
 | `grafana` | 3000 | Monitoring dashboard |
 
@@ -337,12 +344,13 @@ This creates a **feedback loop** that continuously improves accuracy with real E
 API_KEY=your_internal_api_key
 APP_ENV=production
 
-# Database
-DB_HOST=postgres
-DB_PORT=5432
+# Database (MySQL / MariaDB)
+DB_HOST=mysql
+DB_PORT=3306
 DB_NAME=ers_crm
 DB_USER=ers_user
 DB_PASSWORD=strong_password
+DB_POOL_SIZE=5
 
 # MLflow
 MLFLOW_TRACKING_URI=http://mlflow:5000
@@ -352,6 +360,38 @@ MLFLOW_EXPERIMENT_NAME=ers_crm
 MODEL_NAME=ers-compliance-model
 MODEL_STAGE=Production
 MIN_AUC_FOR_PROMOTION=0.85
+```
+
+---
+
+## Database Layer
+
+The app uses **`mysql-connector-python`** with a simple connection pool — no ORM, no abstraction magic. All queries live in `db/queries.py` as plain SQL strings. The schema is initialized via `db/migrations/001_init.sql` which runs automatically on first `docker compose up`.
+
+**Key tables:**
+
+```sql
+-- Stores every ingested taxpayer record (labelled or unlabelled)
+CREATE TABLE taxpayer_records (
+  id              INT AUTO_INCREMENT PRIMARY KEY,
+  tin             VARCHAR(20) NOT NULL,
+  taxpayer_type   ENUM('Individual','Company','NGO','Parastatal'),
+  region          ENUM('Hhohho','Manzini','Lubombo','Shiselweni'),
+  industry_sector VARCHAR(50),
+  ...
+  is_non_compliant TINYINT(1) DEFAULT NULL,  -- NULL until audit confirms
+  ingested_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- Stores every prediction made, linked to model version
+CREATE TABLE predictions (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  tin           VARCHAR(20) NOT NULL,
+  risk_score    DECIMAL(5,2),
+  risk_level    ENUM('LOW','MEDIUM','HIGH'),
+  model_version VARCHAR(50),
+  scored_at     DATETIME DEFAULT CURRENT_TIMESTAMP
+);
 ```
 
 ---
