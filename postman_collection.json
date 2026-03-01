@@ -1,0 +1,160 @@
+{
+    "info": {
+      "name": "Compliance Risk API",
+      "description": "API for predicting compliance risk with JWT authentication.",
+      "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+      {
+        "name": "Health Check",
+        "request": {
+          "method": "GET",
+          "header": [],
+          "url": {
+            "raw": "{{baseUrl}}/health",
+            "host": ["{{baseUrl}}"],
+            "path": ["health"]
+          },
+          "description": "Check if the API is running."
+        },
+        "response": []
+      },
+      {
+        "name": "Register User",
+        "request": {
+          "method": "POST",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\n    \"username\": \"testuser\",\n    \"email\": \"test@example.com\",\n    \"full_name\": \"Test User\",\n    \"password\": \"secret\"\n}"
+          },
+          "url": {
+            "raw": "{{baseUrl}}/auth/register",
+            "host": ["{{baseUrl}}"],
+            "path": ["auth", "register"]
+          },
+          "description": "Create a new user account."
+        },
+        "response": []
+      },
+      {
+        "name": "Login",
+        "event": [
+          {
+            "listen": "test",
+            "script": {
+              "exec": [
+                "// Extract token from response and set as collection variable",
+                "const jsonData = pm.response.json();",
+                "pm.collectionVariables.set('token', jsonData.access_token);",
+                "console.log('Token saved:', jsonData.access_token);"
+              ],
+              "type": "text/javascript"
+            }
+          }
+        ],
+        "request": {
+          "method": "POST",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/x-www-form-urlencoded"
+            }
+          ],
+          "body": {
+            "mode": "urlencoded",
+            "urlencoded": [
+              {
+                "key": "username",
+                "value": "testuser",
+                "type": "text"
+              },
+              {
+                "key": "password",
+                "value": "secret",
+                "type": "text"
+              }
+            ]
+          },
+          "url": {
+            "raw": "{{baseUrl}}/auth/login",
+            "host": ["{{baseUrl}}"],
+            "path": ["auth", "login"]
+          },
+          "description": "Login with username/password. The returned token is automatically stored in the collection variable `token`."
+        },
+        "response": []
+      },
+      {
+        "name": "Predict Risk",
+        "request": {
+          "auth": {
+            "type": "bearer",
+            "bearer": [
+              {
+                "key": "token",
+                "value": "{{token}}",
+                "type": "string"
+              }
+            ]
+          },
+          "method": "POST",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json"
+            }
+          ],
+          "body": {
+            "mode": "raw",
+            "raw": "{\n    \"taxpayer_type\": \"Company\",\n    \"region\": \"Manzini\",\n    \"industry_sector\": \"Retail\",\n    \"years_registered\": 5,\n    \"annual_turnover_szl\": 1200000,\n    \"vat_registered\": true,\n    \"paye_registered\": true,\n    \"num_employees_declared\": 30,\n    \"filings_due_last_12m\": 12,\n    \"filings_submitted_last_12m\": 10,\n    \"late_filings_count\": 3,\n    \"amended_returns_count\": 2,\n    \"outstanding_tax_szl\": 78000,\n    \"penalty_count\": 2,\n    \"prior_audit_flag\": true,\n    \"prior_audit_finding\": true,\n    \"days_since_last_payment\": 95,\n    \"payment_plan_active\": false,\n    \"cross_border_transactions\": false\n}"
+          },
+          "url": {
+            "raw": "{{baseUrl}}/predict",
+            "host": ["{{baseUrl}}"],
+            "path": ["predict"]
+          },
+          "description": "Predict compliance risk (requires Bearer token obtained from login)."
+        },
+        "response": []
+      }
+    ],
+    "variable": [
+      {
+        "key": "baseUrl",
+        "value": "http://127.0.0.1:8000",
+        "type": "string"
+      }
+    ],
+    "auth": {
+      "type": "bearer",
+      "bearer": [
+        {
+          "key": "token",
+          "value": "{{token}}",
+          "type": "string"
+        }
+      ]
+    },
+    "event": [
+      {
+        "listen": "prerequest",
+        "script": {
+          "type": "text/javascript",
+          "exec": []
+        }
+      },
+      {
+        "listen": "test",
+        "script": {
+          "type": "text/javascript",
+          "exec": []
+        }
+      }
+    ]
+  }
