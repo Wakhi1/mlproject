@@ -1,5 +1,8 @@
 from sqlalchemy import Column, Integer, String, Boolean
 from app.database import Base
+import json
+from sqlalchemy import Column, Integer, String, DateTime, Text
+from datetime import datetime
 
 # SQLAlchemy User model
 class User(Base):
@@ -87,3 +90,18 @@ class ComplianceOutput(BaseModel):
     prediction: int
     risk_probability: float
     risk_level: str
+    
+class ModelVersion(Base):
+    __tablename__ = "model_versions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    version = Column(Integer, unique=True, nullable=False)  # auto-incremented version number
+    created_at = Column(DateTime, default=datetime.utcnow)
+    metrics = Column(Text)  # JSON string of metrics (accuracy, auc, etc.)
+    notes = Column(String(255), nullable=True)
+
+    def set_metrics(self, metrics_dict):
+        self.metrics = json.dumps(metrics_dict)
+
+    def get_metrics(self):
+        return json.loads(self.metrics) if self.metrics else {}

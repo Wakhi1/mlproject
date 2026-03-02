@@ -1,7 +1,7 @@
 {
     "info": {
       "name": "Compliance Risk API",
-      "description": "API for predicting compliance risk with JWT authentication.",
+      "description": "Complete API for compliance risk prediction with authentication, bulk upload, and model versioning.",
       "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
     },
     "item": [
@@ -14,8 +14,7 @@
             "raw": "{{baseUrl}}/health",
             "host": ["{{baseUrl}}"],
             "path": ["health"]
-          },
-          "description": "Check if the API is running."
+          }
         },
         "response": []
       },
@@ -37,8 +36,7 @@
             "raw": "{{baseUrl}}/auth/register",
             "host": ["{{baseUrl}}"],
             "path": ["auth", "register"]
-          },
-          "description": "Create a new user account."
+          }
         },
         "response": []
       },
@@ -49,7 +47,6 @@
             "listen": "test",
             "script": {
               "exec": [
-                "// Extract token from response and set as collection variable",
                 "const jsonData = pm.response.json();",
                 "pm.collectionVariables.set('token', jsonData.access_token);",
                 "console.log('Token saved:', jsonData.access_token);"
@@ -85,13 +82,12 @@
             "raw": "{{baseUrl}}/auth/login",
             "host": ["{{baseUrl}}"],
             "path": ["auth", "login"]
-          },
-          "description": "Login with username/password. The returned token is automatically stored in the collection variable `token`."
+          }
         },
         "response": []
       },
       {
-        "name": "Predict Risk",
+        "name": "Predict Single",
         "request": {
           "auth": {
             "type": "bearer",
@@ -118,8 +114,101 @@
             "raw": "{{baseUrl}}/predict",
             "host": ["{{baseUrl}}"],
             "path": ["predict"]
+          }
+        },
+        "response": []
+      },
+      {
+        "name": "Bulk Predict (Upload CSV/Excel)",
+        "request": {
+          "auth": {
+            "type": "bearer",
+            "bearer": [
+              {
+                "key": "token",
+                "value": "{{token}}",
+                "type": "string"
+              }
+            ]
           },
-          "description": "Predict compliance risk (requires Bearer token obtained from login)."
+          "method": "POST",
+          "header": [],
+          "body": {
+            "mode": "formdata",
+            "formdata": [
+              {
+                "key": "file",
+                "type": "file",
+                "src": "/path/to/your/data.csv"
+              }
+            ]
+          },
+          "url": {
+            "raw": "{{baseUrl}}/predict/bulk",
+            "host": ["{{baseUrl}}"],
+            "path": ["predict", "bulk"]
+          }
+        },
+        "response": []
+      },
+      {
+        "name": "List Model Versions",
+        "request": {
+          "auth": {
+            "type": "bearer",
+            "bearer": [
+              {
+                "key": "token",
+                "value": "{{token}}",
+                "type": "string"
+              }
+            ]
+          },
+          "method": "GET",
+          "header": [],
+          "url": {
+            "raw": "{{baseUrl}}/model/versions",
+            "host": ["{{baseUrl}}"],
+            "path": ["model", "versions"]
+          }
+        },
+        "response": []
+      },
+      {
+        "name": "Retrain Model",
+        "request": {
+          "auth": {
+            "type": "bearer",
+            "bearer": [
+              {
+                "key": "token",
+                "value": "{{token}}",
+                "type": "string"
+              }
+            ]
+          },
+          "method": "POST",
+          "header": [],
+          "body": {
+            "mode": "formdata",
+            "formdata": [
+              {
+                "key": "file",
+                "type": "file",
+                "src": "/path/to/labeled_data.csv"
+              },
+              {
+                "key": "notes",
+                "value": "Retrained with new data from Q1 2026",
+                "type": "text"
+              }
+            ]
+          },
+          "url": {
+            "raw": "{{baseUrl}}/model/retrain",
+            "host": ["{{baseUrl}}"],
+            "path": ["model", "retrain"]
+          }
         },
         "response": []
       }
@@ -140,21 +229,5 @@
           "type": "string"
         }
       ]
-    },
-    "event": [
-      {
-        "listen": "prerequest",
-        "script": {
-          "type": "text/javascript",
-          "exec": []
-        }
-      },
-      {
-        "listen": "test",
-        "script": {
-          "type": "text/javascript",
-          "exec": []
-        }
-      }
-    ]
+    }
   }

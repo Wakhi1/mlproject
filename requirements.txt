@@ -10,3 +10,8 @@ python-jose[cryptography]
 python-multipart
 email-validator
 bcrypt
+openpyxl
+mlflow
+prometheus-fastapi-instrumentator
+pymysql
+cryptography

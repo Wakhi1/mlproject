@@ -1,410 +1,405 @@
-# ERS Compliance Risk Model (CRM)
->
-> A lightweight MLOps pipeline for taxpayer compliance risk scoring at the Eswatini Revenue Service.
 
----
+# ERS Compliance Risk Prediction API
 
-## Table of Contents
+A FastAPI-based machine learning service that predicts taxpayer compliance risk. Includes user authentication (JWT), single prediction, bulk prediction via file upload, and model versioning with retraining capabilities.
 
-- [Overview](#overview)
-- [Architecture](#architecture)
-- [Project Structure](#project-structure)
-- [Dataset](#dataset)
-- [Model](#model)
-- [API Usage](#api-usage)
-- [Docker Deployment](#docker-deployment)
-- [CI/CD Pipeline](#cicd-pipeline)
-- [Monitoring & Versioning](#monitoring--versioning)
-- [Retraining with New Data](#retraining-with-new-data)
-- [Environment Variables](#environment-variables)
-- [Contributing](#contributing)
+## Features
 
----
+- 🔐 **JWT Authentication** – Register and login to obtain a token.
+- 📈 **Single Prediction** – Submit one taxpayer record and get risk level.
+- 📊 **Bulk Prediction** – Upload CSV/Excel files for batch predictions (download results).
+- 🤖 **Model Versioning** – Track trained models with performance metrics (AUC, accuracy, etc.).
+- 🔄 **Retraining** – Upload labeled data to retrain the model and create a new version.
 
-## Overview
+## Tech Stack
 
-The **ERS Compliance Risk Model** is a machine learning system that assigns a **compliance risk score (0–100)** to taxpayers registered with the Eswatini Revenue Service. A higher score indicates a higher risk of non-compliance, tax evasion, or fraud.
+- **FastAPI** – Web framework.
+- **SQLAlchemy** + **MySQL** (XAMPP) – User and model version storage.
+- **Scikit-learn** – RandomForest classifier.
+- **Pandas** – Data processing.
+- **JWT** – Authentication.
+- **bcrypt** – Password hashing.
 
-ERS staff can:
 
-- Query the risk score of a specific taxpayer by TIN (Taxpayer Identification Number)
-- Submit new structured data to update and retrain the model
-- Monitor model performance over time via a lightweight dashboard
 
-The system is intentionally **lean** — no heavy orchestration frameworks. It uses:
+## Setup Instructions
 
-- **FastAPI** — REST API for scoring and data ingestion
-- **scikit-learn / XGBoost** — model training
-- **MySQL / MariaDB** — taxpayer record storage, queried with raw SQL via `mysql-connector-python`
-- **MLflow** — model versioning and experiment tracking
-- **Docker + Docker Compose** — containerized deployment
-- **GitHub Actions** — CI/CD pipeline
-- **Prometheus + Grafana** — runtime monitoring (AUC, prediction drift, request latency)
+### 1. Prerequisites
 
----
+- Python 3.9+
+- XAMPP (MySQL) running locally, MariaDB when containerized
+- Git and GitHub for CI/CD(github actions)
 
-## Architecture
-
-```
-┌─────────────────────────────────────────────────────────────┐
-│                        ERS Staff / Frontend                 │
-│              (Internal Web Portal or API Client)            │
-└─────────────────────────┬───────────────────────────────────┘
-                          │ HTTP
-                          ▼
-              ┌───────────────────────┐
-              │   FastAPI Service     │  ← /predict, /ingest, /retrain
-              │   (Port 8000)         │
-              └──────────┬────────────┘
-                         │
-          ┌──────────────┼──────────────┐
-          ▼              ▼              ▼
-   ┌────────────┐  ┌──────────┐  ┌───────────────┐
-   │  MLflow    │  │ Model    │  │  MySQL/MariaDB│
-   │  Tracking  │  │ Registry │  │  (Taxpayer    │
-   │  (Port     │  │ (Local   │  │   Records DB) │
-   │   5000)    │  │  FS/S3)  │  └───────────────┘
-   └────────────┘  └──────────┘
-          │
-          ▼
-   ┌─────────────────────┐
-   │ Prometheus + Grafana│  ← AUC, Drift, Latency dashboards
-   │ (Port 3000)         │
-   └─────────────────────┘
-```
-
----
-
-## Project Structure
-
-```
-ers-compliance-risk-model/
-│
-├── api/
-│   ├── main.py                  # FastAPI entry point
-│   ├── routes/
-│   │   ├── predict.py           # POST /predict — score a taxpayer
-│   │   ├── ingest.py            # POST /ingest — add new labelled records
-│   │   └── retrain.py           # POST /retrain — trigger model retraining
-│   ├── schemas/
-│   │   ├── taxpayer.py          # Pydantic input/output models
-│   └── dependencies.py          # Shared deps (DB, model loader)
-│
-├── model/
-│   ├── train.py                 # Training script (XGBoost pipeline)
-│   ├── evaluate.py              # AUC, F1, confusion matrix output
-│   ├── preprocess.py            # Feature engineering & encoding
-│   └── artifacts/               # Saved model artifacts (gitignored)
-│
-├── db/
-│   ├── connection.py            # mysql-connector-python pool setup
-│   ├── queries.py               # All raw SQL queries (insert, select, etc.)
-│   └── migrations/
-│       └── 001_init.sql         # Initial schema — taxpayer_records table
-│
-├── data/
-│   ├── ers_sample_dataset.csv   # Seed dataset (Eswatini context)
-│   └── schema.md                # Column definitions
-│
-├── monitoring/
-│   ├── prometheus.yml           # Scrape config
-│   └── grafana/
-│       └── dashboard.json       # Pre-built compliance risk dashboard
-│
-├── mlflow/
-│   └── mlruns/                  # MLflow experiment store (gitignored)
-│
-├── .github/
-│   └── workflows/
-│       ├── ci.yml               # Lint, test, build on PR
-│       └── cd.yml               # Deploy to server on merge to main
-│
-├── docker-compose.yml           # Orchestrates all services
-├── Dockerfile                   # API container
-├── requirements.txt
-├── .env.example
-└── README.md
-```
-
----
-
-## Dataset
-
-The model trains on structured taxpayer data. Each record represents one taxpayer filing period. See `data/ers_sample_dataset.csv` for the seed data.
-
-### Feature Columns
-
-| Column | Type | Description |
-|---|---|---|
-| `tin` | string | Taxpayer Identification Number |
-| `taxpayer_type` | categorical | `Individual`, `Company`, `NGO`, `Parastatal` |
-| `region` | categorical | `Hhohho`, `Manzini`, `Lubombo`, `Shiselweni` |
-| `industry_sector` | categorical | e.g. `Retail`, `Agriculture`, `Manufacturing` |
-| `years_registered` | int | Years since registration with ERS |
-| `annual_turnover_szl` | float | Declared annual turnover in Eswatini Lilangeni |
-| `vat_registered` | bool | Whether taxpayer is VAT registered |
-| `paye_registered` | bool | Whether taxpayer deducts PAYE |
-| `num_employees_declared` | int | Number of employees declared |
-| `filings_due_last_12m` | int | Expected filings in the last 12 months |
-| `filings_submitted_last_12m` | int | Actual filings submitted |
-| `late_filings_count` | int | Number of late filings |
-| `amended_returns_count` | int | Number of amended/corrected returns |
-| `outstanding_tax_szl` | float | Current outstanding tax debt (SZL) |
-| `penalty_count` | int | Number of penalties issued |
-| `prior_audit_flag` | bool | Whether previously audited |
-| `prior_audit_finding` | bool | Whether prior audit found discrepancy |
-| `days_since_last_payment` | int | Days since most recent tax payment |
-| `payment_plan_active` | bool | Currently on a payment arrangement |
-| `cross_border_transactions` | bool | Has declared cross-border activity |
-| `is_non_compliant` | bool | **Target label** — confirmed non-compliant |
-
----
-
-## Model
-
-The model is an **XGBoost classifier** wrapped in a scikit-learn `Pipeline` with preprocessing steps (encoding, imputation, scaling).
-
-**Training:**
+### 2. Clone Repository
 
 ```bash
-python model/train.py --data data/ers_sample_dataset.csv --experiment ers_crm_v1
+git clone https://github.com/Wakhi1/mlproject.git
+cd mlproject
 ```
 
-**Output:**
-
-- Trained model logged to MLflow with AUC, F1, Precision, Recall
-- Model artifact saved and registered as `ers-compliance-model` in MLflow Model Registry
-- Automatically promoted to `Staging` if AUC > 0.80, `Production` if AUC > 0.88
-
----
-
-## API Usage
-
-### Score a Taxpayer
-
-```http
-POST /predict
-Content-Type: application/json
-
-{
-  "tin": "E0012345678",
-  "taxpayer_type": "Company",
-  "region": "Manzini",
-  "industry_sector": "Retail",
-  "years_registered": 5,
-  "annual_turnover_szl": 1500000,
-  "vat_registered": true,
-  "paye_registered": true,
-  "num_employees_declared": 12,
-  "filings_due_last_12m": 12,
-  "filings_submitted_last_12m": 9,
-  "late_filings_count": 4,
-  "amended_returns_count": 2,
-  "outstanding_tax_szl": 45000,
-  "penalty_count": 1,
-  "prior_audit_flag": false,
-  "prior_audit_finding": false,
-  "days_since_last_payment": 120,
-  "payment_plan_active": false,
-  "cross_border_transactions": false
-}
-```
-
-**Response:**
-
-```json
-{
-  "tin": "E0012345678",
-  "risk_score": 74.3,
-  "risk_level": "HIGH",
-  "model_version": "ers-compliance-model/3",
-  "scored_at": "2025-09-01T10:23:00Z"
-}
-```
-
-### Ingest New Labelled Record
-
-```http
-POST /ingest
-```
-
-Accepts the same schema as `/predict` plus `is_non_compliant: true/false`. Records are stored to the database and used in the next retraining cycle.
-
-### Trigger Retraining
-
-```http
-POST /retrain
-```
-
-Pulls all records from the database, retrains the pipeline, evaluates, and registers a new model version in MLflow. Protected by an internal API key.
-
----
-
-## Docker Deployment
-
-### Prerequisites
-
-- Docker >= 24
-- Docker Compose >= 2.20
-
-### Run All Services
+### 3. Create Virtual Environment
 
 ```bash
-cp .env.example .env
-# Edit .env with your secrets
-docker compose up -d --build
+python -m venv mlops-env
+# Windows
+mlops-env\Scripts\activate
+# Linux/Mac
+source mlops-env/bin/activate
 ```
 
-### Services Started
+### 4. Install Dependencies
 
-| Service | Port | Purpose |
-|---|---|---|
-| `api` | 8000 | FastAPI scoring & ingestion |
-| `mlflow` | 5000 | Experiment tracking UI |
-| `mysql` | 3306 | Taxpayer record storage (MariaDB compatible) |
-| `prometheus` | 9090 | Metrics scraping |
-| `grafana` | 3000 | Monitoring dashboard |
+```bash
+pip install -r requirements.txt
+```
+
+### 5. Configure Database (XAMPP)
+
+- Start MySQL from XAMPP Control Panel.
+- Create database `compliance_db` (via phpMyAdmin or SQL command).
+- The tables (`users`, `model_versions`) will be created automatically on first run (see `app/main.py`).
+
+### 6. Environment Variables
+
+Create a `.env` file in the project root:
+
+```env
+# Database
+DB_USER=user
+DB_PASSWORD=password
+DB_HOST=localhost
+DB_PORT=3306
+DB_NAME=compliance_db
+
+# JWT
+JWT_SECRET=your-very-secret-key-change-this
+JWT_ALGORITHM=HS256
+ACCESS_TOKEN_EXPIRE_MINUTES=30
+```
+
+*sample database
+```
+--
+-- Database: `compliance_db`
+--
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `model_versions`
+--
+
+CREATE TABLE `model_versions` (
+  `id` int(11) NOT NULL,
+  `version` int(11) NOT NULL,
+  `created_at` datetime DEFAULT NULL,
+  `metrics` text DEFAULT NULL,
+  `notes` varchar(255) DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+-- --------------------------------------------------------
+
+--
+-- Table structure for table `users`
+--
+
+CREATE TABLE `users` (
+  `id` int(11) NOT NULL,
+  `username` varchar(50) NOT NULL,
+  `email` varchar(100) NOT NULL,
+  `full_name` varchar(100) DEFAULT NULL,
+  `hashed_password` varchar(255) NOT NULL,
+  `disabled` tinyint(1) DEFAULT 0,
+  `created_at` timestamp NOT NULL DEFAULT current_timestamp()
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+--
+-- Dumping data for table `users`
+--
+
+INSERT INTO `users` (`id`, `username`, `email`, `full_name`, `hashed_password`, `disabled`, `created_at`) VALUES
+(1, 'admin', 'admin@system.com', 'System Administrator', '$2a$12$Qj4Et29Lrf0jzQaZ.DfgT.XCHHOJM/qwVp2cB3M7n22nEkYkCYt/i', 0, '2026-03-01 21:50:31'),
+(2, 'inspector', 'inspector@system.com', 'System Inspector', '$2a$12$Qj4Et29Lrf0jzQaZ.DfgT.XCHHOJM/qwVp2cB3M7n22nEkYkCYt/i', 0, '2026-03-01 21:50:31'),
+(3, 'custom_officer', 'custom.officer@system.com', 'Custom Officer', '$2a$12$Qj4Et29Lrf0jzQaZ.DfgT.XCHHOJM/qwVp2cB3M7n22nEkYkCYt/i', 0, '2026-03-01 21:50:31'),
+(4, 'tester', 'tester@system.com', 'System Tester', '$2a$12$Qj4Et29Lrf0jzQaZ.DfgT.XCHHOJM/qwVp2cB3M7n22nEkYkCYt/i', 0, '2026-03-01 21:50:31');
+
+--
+-- Indexes for dumped tables
+--
+
+--
+-- Indexes for table `model_versions`
+--
+ALTER TABLE `model_versions`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `version` (`version`),
+  ADD KEY `ix_model_versions_id` (`id`);
+
+--
+-- Indexes for table `users`
+--
+ALTER TABLE `users`
+  ADD PRIMARY KEY (`id`),
+  ADD UNIQUE KEY `username` (`username`),
+  ADD UNIQUE KEY `email` (`email`);
+
+--
+-- AUTO_INCREMENT for dumped tables
+--
+
+--
+-- AUTO_INCREMENT for table `model_versions`
+--
+ALTER TABLE `model_versions`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+--
+-- AUTO_INCREMENT for table `users`
+--
+ALTER TABLE `users`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=5;
+COMMIT;
+```
+
+*Note: If MySQL has a password, set `DB_PASSWORD` accordingly.*
+
+### 7. Train Initial Model
+
+Place the sample dataset `ers_sample_dataset.csv` in the project root, then run:
+
+```bash
+cd training
+python train.py
+```
+
+This creates the model artifacts in `ml_artifacts/`.
+
+### 8. Run the API Server
+
+```bash
+uvicorn app.main:app --reload
+```
+
+Server will be available at `http://127.0.0.1:8000`.
+
+### 9. Import Postman Collection
+
+Import the provided `Compliance_Risk_API.postman_collection.json` into Postman to test all endpoints.
+
+---
+
+## API Endpoints
+
+All protected endpoints require a Bearer token obtained from `/auth/login`.
 
 ### Health Check
 
+- `GET /health` – No authentication. Returns API status.
+
+### Authentication
+
+- `POST /auth/register` – Register new user.
+  ```json
+  {
+    "username": "testuser",
+    "email": "test@example.com",
+    "full_name": "Test User",
+    "password": "secret"
+  }
+  ```
+
+- `POST /auth/login` – Login, returns JWT token.
+  - Body (form-urlencoded): `username` and `password`.
+
+### Prediction
+
+- `POST /predict` – Single prediction.
+  - Headers: `Authorization: Bearer <token>`
+  - Body: JSON matching the training features (see example in collection).
+
+- `POST /predict/bulk` – Batch prediction.
+  - Headers: `Authorization: Bearer <token>`
+  - Body: `form-data` with key `file` (CSV or Excel file).
+  - Returns a CSV file with predictions appended.
+
+### Model Management
+
+- `GET /model/versions` – List all trained model versions with metrics.
+- `POST /model/retrain` – Retrain model with new labeled data.
+  - Headers: `Authorization: Bearer <token>`
+  - Body: `form-data`
+    - `file`: CSV file containing all features plus `is_non_compliant`.
+    - `notes` (optional): description of the retraining.
+  - Returns new version number and evaluation metrics.
+
+---
+
+## Example Usage
+
+### 1. Register a user
+
 ```bash
-curl http://localhost:8000/health
-# {"status": "ok", "model_version": "ers-compliance-model/3"}
+curl -X POST "http://127.0.0.1:8000/auth/register" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"user1","email":"user1@example.com","full_name":"User One","password":"pass123"}'
+```
+
+### 2. Login
+
+```bash
+curl -X POST "http://127.0.0.1:8000/auth/login" \
+  -H "Content-Type: application/x-www-form-urlencoded" \
+  -d "username=user1&password=pass123"
+```
+
+Save the returned `access_token`.
+
+### 3. Single prediction
+
+```bash
+curl -X POST "http://127.0.0.1:8000/predict" \
+  -H "Authorization: Bearer <token>" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "taxpayer_type": "Company",
+    "region": "Manzini",
+    "industry_sector": "Retail",
+    "years_registered": 5,
+    "annual_turnover_szl": 1200000,
+    "vat_registered": true,
+    "paye_registered": true,
+    "num_employees_declared": 30,
+    "filings_due_last_12m": 12,
+    "filings_submitted_last_12m": 10,
+    "late_filings_count": 3,
+    "amended_returns_count": 2,
+    "outstanding_tax_szl": 78000,
+    "penalty_count": 2,
+    "prior_audit_flag": true,
+    "prior_audit_finding": true,
+    "days_since_last_payment": 95,
+    "payment_plan_active": false,
+    "cross_border_transactions": false
+  }'
+```
+
+### 4. Bulk prediction
+
+```bash
+curl -X POST "http://127.0.0.1:8000/predict/bulk" \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@/path/to/your/data.csv" \
+  --output predictions.csv
+```
+
+### 5. Retrain model
+
+```bash
+curl -X POST "http://127.0.0.1:8000/model/retrain" \
+  -H "Authorization: Bearer <token>" \
+  -F "file=@/path/to/labeled_data.csv" \
+  -F "notes=Retrained with March 2026 data"
 ```
 
 ---
 
-## CI/CD Pipeline
+## File Structure
 
-Powered by **GitHub Actions** with two workflows:
-
-### `ci.yml` — Runs on every Pull Request
-
-1. Lint with `flake8`
-2. Run unit tests (`pytest`)
-3. Build Docker image (no push)
-4. Validate model training script with sample data
-
-### `cd.yml` — Runs on merge to `main`
-
-1. Build and push Docker image to container registry (GHCR or Docker Hub)
-2. SSH into deployment server
-3. Pull latest image and restart services via `docker compose up -d`
-4. Run smoke test against `/health` endpoint
-5. Notify on failure
-
-> Secrets required: `SERVER_HOST`, `SERVER_USER`, `SERVER_SSH_KEY`, `REGISTRY_TOKEN`
-
----
-
-## Monitoring & Versioning
-
-### MLflow (Model Versioning)
-
-- Every training run logs: AUC-ROC, F1-Score, Precision, Recall, feature importances
-- Models are versioned and tagged (`Staging` / `Production`)
-- Access MLflow UI: `http://localhost:5000`
-
-### Prometheus + Grafana (Runtime Monitoring)
-
-The API exposes a `/metrics` endpoint. Grafana dashboards track:
-
-| Metric | Description |
-|---|---|
-| `ers_crm_auc_score` | AUC of currently deployed model |
-| `ers_crm_prediction_total` | Total predictions served |
-| `ers_crm_high_risk_ratio` | Ratio of HIGH risk predictions (drift indicator) |
-| `ers_crm_api_latency_seconds` | API response time |
-| `ers_crm_ingest_total` | Total new records ingested |
-
-> If `ers_crm_high_risk_ratio` shifts significantly from baseline, a Grafana alert fires — this is an early signal of **data drift** and triggers a review for retraining.
-
-Access Grafana: `http://localhost:3000` (default login: `admin / admin`)
-
----
-
-## Retraining with New Data
-
-The model is designed to **improve over time** as ERS staff use it:
-
-1. Staff query a taxpayer → model returns a risk score
-2. If an audit later confirms or refutes the prediction, staff submit the labelled outcome via `POST /ingest`
-3. Records accumulate in PostgreSQL
-4. Periodically (manually or via a cron job), staff call `POST /retrain`
-5. A new model version is trained, evaluated, and — if it outperforms the current production model on AUC — automatically promoted
-
-This creates a **feedback loop** that continuously improves accuracy with real ERS audit outcomes.
-
----
-
-## Environment Variables
-
-```env
-# API
-API_KEY=your_internal_api_key
-APP_ENV=production
-
-# Database (MySQL / MariaDB)
-DB_HOST=mysql
-DB_PORT=3306
-DB_NAME=ers_crm
-DB_USER=ers_user
-DB_PASSWORD=strong_password
-DB_POOL_SIZE=5
-
-# MLflow
-MLFLOW_TRACKING_URI=http://mlflow:5000
-MLFLOW_EXPERIMENT_NAME=ers_crm
-
-# Model
-MODEL_NAME=ers-compliance-model
-MODEL_STAGE=Production
-MIN_AUC_FOR_PROMOTION=0.85
+```
+compliance-risk-model/
+├── app/
+│   ├── __init__.py
+│   ├── main.py              # FastAPI app with routers
+│   ├── database.py           # DB connection
+│   ├── models.py             # SQLAlchemy models + Pydantic schemas
+│   ├── auth.py               # JWT & bcrypt functions
+│   ├── ml_utils.py           # Shared ML functions
+│   └── routes/
+│       ├── auth.py           # /auth endpoints
+│       ├── predict.py        # single prediction
+│       ├── bulk.py           # bulk prediction
+│       └── model.py          # versioning & retraining
+├── ml_artifacts/             # trained model files
+├── training/
+│   └── train.py              # initial model training
+├── .env
+├── requirements.txt
+└── postman_collection.json
 ```
 
 ---
 
-## Database Layer
+## Model Versioning
 
-The app uses **`mysql-connector-python`** with a simple connection pool — no ORM, no abstraction magic. All queries live in `db/queries.py` as plain SQL strings. The schema is initialized via `db/migrations/001_init.sql` which runs automatically on first `docker compose up`.
+Each retraining creates a new entry in the `model_versions` table with:
 
-**Key tables:**
+- `version`: auto-incremented integer.
+- `created_at`: timestamp.
+- `metrics`: JSON with `accuracy`, `precision`, `recall`, `f1_score`, `auc`, `test_size`.
+- `notes`: user‑provided description.
 
-```sql
--- Stores every ingested taxpayer record (labelled or unlabelled)
-CREATE TABLE taxpayer_records (
-  id              INT AUTO_INCREMENT PRIMARY KEY,
-  tin             VARCHAR(20) NOT NULL,
-  taxpayer_type   ENUM('Individual','Company','NGO','Parastatal'),
-  region          ENUM('Hhohho','Manzini','Lubombo','Shiselweni'),
-  industry_sector VARCHAR(50),
-  ...
-  is_non_compliant TINYINT(1) DEFAULT NULL,  -- NULL until audit confirms
-  ingested_at     DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+The model artifacts (`model.pkl`, `encoders.pkl`, `columns.pkl`) are overwritten. For production, consider archiving previous versions separately.
 
--- Stores every prediction made, linked to model version
-CREATE TABLE predictions (
-  id            INT AUTO_INCREMENT PRIMARY KEY,
-  tin           VARCHAR(20) NOT NULL,
-  risk_score    DECIMAL(5,2),
-  risk_level    ENUM('LOW','MEDIUM','HIGH'),
-  model_version VARCHAR(50),
-  scored_at     DATETIME DEFAULT CURRENT_TIMESTAMP
-);
+---
+
+## Troubleshooting
+
+- **Database connection error**: Verify MySQL is running and credentials in `.env` are correct.
+- **ModuleNotFoundError**: Ensure all packages installed (`pip install -r requirements.txt`).
+- **JWT authentication fails**: Check that `JWT_SECRET` is set and the token is passed correctly.
+- **Bulk upload fails**: File must contain all required feature columns (same as training). For retraining, must include `is_non_compliant`.
+
+---
+
+
+## Running the Full Stack
+Create the .env file with your secrets.
+
+Ensure ports are free (3307, 5000, 8000, 9090, 3000). If conflicts, adjust docker-compose.yml.
+
+## Start all services:
+```bash
+docker-compose up -d
 ```
 
----
+## Check logs:
+```bash
+docker-compose logs -f app
+```
 
-## Contributing
+## Access services:
 
-This project is maintained by the ERS ICT & Data Analytics Division.
+### API docs: http://localhost:8000/docs
 
-- Branch naming: `feature/`, `fix/`, `chore/`
-- All PRs require passing CI before merge
-- Model changes must include updated evaluation metrics in the PR description
-- Never commit real taxpayer data — use anonymized or synthetic records only
+### MLflow UI: http://localhost:5000
 
----
+### Prometheus: http://localhost:9090
 
-*Built for the Eswatini Revenue Service — Kingdom of Eswatini*
+### Grafana: http://localhost:3000 (admin/admin)
+
+
+## Train the initial model (inside the app container or locally with MLflow running):
+```bash
+docker exec -it compliance_api python training/train.py
+```
+
+
+This logs the model to MLflow and registers it.
+
+Register a user via the API, login, and test predictions.
+
+## CI/CD (GitHub Actions)
+The .github/workflows/ci-cd.yml file provided earlier will run tests, build the Docker image, and deploy on push to main. Make sure to set repository secrets: DOCKER_USERNAME, DOCKER_PASSWORD, SERVER_HOST, SERVER_USER, SSH_PRIVATE_KEY.
+
+## Final Notes
+Drift detection: Implement a periodic task that computes drift (e.g., PSI) between training and recent predictions, and updates the drift_score gauge.
+
+Model version metrics: After each retraining, update the model_auc, model_accuracy, etc., gauges using the metrics from MLflow.
+
+Authentication metrics: Increment login_attempts and registrations counters in your auth routes.
+
+Your MLOps pipeline is now complete: containerized, with monitoring, experiment tracking, and CI/CD. Let me know if you need help with any specific implementation detail!
+
+## License
+
+[MIT](LICENSE)
